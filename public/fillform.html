@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Design World — Fill a Form</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header id="app-header"></header>
+<main>
+  <h1>Fill a form</h1>
+  <p class="muted">Paste any Google Forms or Luma registration link. The agent fills what it confidently can from your profile — you review the actual filled page below, then press Submit yourself.</p>
+
+  <form id="preview-form" style="display:flex; gap:8px; margin-bottom:16px;">
+    <input id="url-input" placeholder="https://docs.google.com/forms/... or https://luma.com/..." required style="margin-bottom:0;" />
+    <button type="submit">Fill for review</button>
+  </form>
+  <p id="status" class="muted" hidden></p>
+
+  <div id="review" hidden>
+    <p id="warning" class="status-banner status-error" hidden></p>
+    <img id="screenshot" style="max-width:100%; border:1px solid #ddd; border-radius:8px; margin-bottom:16px;" />
+    <h3>Filled fields</h3>
+    <div id="filled-list"></div>
+    <h3 id="skipped-heading" hidden>Not filled (needs your input on the real form)</h3>
+    <div id="skipped-list"></div>
+    <button id="submit-btn">Approve &amp; Submit</button>
+    <p id="submit-status" class="muted"></p>
+  </div>
+</main>
+<script src="/common.js"></script>
+<script>
+(async () => {
+  const me = await fetchMe();
+  if (!me.loggedIn) { window.location.href = "/"; return; }
+  renderHeader(me);
+
+  const statusEl = document.getElementById("status");
+  const reviewEl = document.getElementById("review");
+  const warningEl = document.getElementById("warning");
+  let reviewId = null;
+
+  document.getElementById("preview-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    reviewEl.hidden = true;
+    statusEl.hidden = false;
+    statusEl.textContent = "Agent is opening the real form and filling what it can — this takes a few seconds...";
+    const url = document.getElementById("url-input").value.trim();
+
+    try {
+      const data = await api("/api/form-review/preview", { method: "POST", body: JSON.stringify({ url }) });
+      reviewId = data.reviewId;
+      statusEl.hidden = true;
+      reviewEl.hidden = false;
+
+      if (data.warning) {
+        warningEl.hidden = false;
+        warningEl.textContent = data.warning;
+      } else {
+        warningEl.hidden = true;
+      }
+
+      document.getElementById("screenshot").src = "data:image/png;base64," + data.screenshot;
+      document.getElementById("filled-list").innerHTML = data.filled.map((f) => `
+        <div class="field-row">
+          <label>${f.label} ${f.source === "agent_generated" ? '<span class="agent-generated-tag">(agent-generated)</span>' : ""}</label>
+          <div>${f.value}</div>
+        </div>`).join("") || "<p class=\"muted\">None.</p>";
+
+      const skippedHeading = document.getElementById("skipped-heading");
+      const skippedList = document.getElementById("skipped-list");
+      if (data.skipped && data.skipped.length) {
+        skippedHeading.hidden = false;
+        skippedList.innerHTML = data.skipped.map((s) => `<div class="field-row"><label>${s.label}</label><div class="muted">${s.reason}</div></div>`).join("");
+      } else {
+        skippedHeading.hidden = true;
+        skippedList.innerHTML = "";
+      }
+    } catch (err) {
+      statusEl.textContent = err.message;
+    }
+  });
+
+  document.getElementById("submit-btn").addEventListener("click", async () => {
+    const submitStatus = document.getElementById("submit-status");
+    submitStatus.textContent = "Submitting the real form...";
+    try {
+      await api(`/api/form-review/${reviewId}/submit`, { method: "POST" });
+      submitStatus.textContent = "Submitted. Check Applications for the record, and your email for confirmation.";
+    } catch (err) {
+      submitStatus.textContent = err.message;
+    }
+  });
+})();
+</script>
+</body>
+</html>
