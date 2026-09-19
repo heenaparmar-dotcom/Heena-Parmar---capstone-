@@ -1,38 +1,43 @@
 const express = require("express");
 const mcp = require("../mcp/tavilyClient");
-const gemini = require("../services/gemini");
+const groq = require("../services/groq");
+const { parseTavilyResults } = require("../utils/parseTavilyResults");
 
 const router = express.Router();
 
-// GET /api/trends — real design-trend discovery: a real MCP search (with
-// Tavily's own image results) + Gemini structuring. No static/demo data is
-// ever returned from here; if the real call fails, the frontend falls back
-// to its own clearly-labeled demo content rather than this endpoint faking
-// a result.
+// GET /api/trends — real MCP search for current design trends/designers
+// worldwide, then Groq extracts only what the source text actually states
+// (designer name, city, country). Never fabricates attribution; unknown
+// fields are null. No static/demo data is ever returned from here.
 router.get("/", async (req, res) => {
   try {
-    console.log("[trends] MCP CALL tavily_search (with images) — design trends");
-    const raw = await mcp.searchWithImages("emerging graphic design and UX design trends 2026", 6);
-    console.log(`[trends] MCP RESULT — ${raw.length} chars returned`);
+    console.log("[trends] MCP CALL tavily_search — design trends around the world");
+    const raw = await mcp.searchWeb("emerging graphic design and UX design trends 2026 designers", 8);
+    const candidates = parseTavilyResults(raw);
+    console.log(`[trends] Parsed ${candidates.length} raw candidate(s)`);
 
-    if (!raw || !raw.trim()) {
+    if (candidates.length === 0) {
       return res.json({ trends: [], status: "no_results" });
     }
 
-    const trends = await gemini.extractTrends(raw);
-    console.log(`[trends] Structured ${trends.length} trend item(s)`);
-    res.json({
-      trends: trends.map((t) => ({ ...t, imageUrl: t.imageUrl || null })),
-      status: "success",
-    });
+    const sourceText = candidates.map((c) => `Title: ${c.name}\nURL: ${c.url}\nContent: ${c.snippet}`).join("\n\n");
+
+    let trends;
+    try {
+      trends = await groq.extractTrends(sourceText);
+    } catch (err) {
+      if (err instanceof groq.GroqUnavailableError) {
+        return res.status(503).json({
+          error: "The real search succeeded, but Groq couldn't structure the results right now (rate limit/overload). Try again shortly.",
+        });
+      }
+      throw err;
+    }
+
+    res.json({ trends, status: "success" });
   } catch (err) {
     console.error("[trends] ERROR:", err.message);
-    const message = /GEMINI/i.test(err.message)
-      ? "AI processing failed. Please try again."
-      : /MCP|TAVILY/i.test(err.message)
-      ? "Search source unavailable. Please try again."
-      : err.message;
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: err.message });
   }
 });
 

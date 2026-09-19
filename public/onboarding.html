@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Design World — Onboarding</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header id="app-header"></header>
+<main>
+  <h1>Tell us what you're looking for</h1>
+  <p class="muted">This drives your personalized top-10 feed and lets the agent apply on your behalf. Nothing here is shared beyond this app.</p>
+
+  <form id="onboarding-form">
+    <div class="field-row">
+      <label>Preferred locations (comma-separated)</label>
+      <input name="locations" placeholder="Pune, Mumbai" required />
+    </div>
+    <div class="field-row">
+      <label>Interests (comma-separated)</label>
+      <input name="interests" placeholder="UX design, graphic design, typography" required />
+    </div>
+    <div class="field-row">
+      <label>Event types (comma-separated)</label>
+      <input name="eventTypes" placeholder="workshops, competitions" required />
+    </div>
+
+    <h2>Your details (used to fill applications)</h2>
+    <div class="field-row"><label>Full name</label><input name="fullName" required /></div>
+    <div class="field-row"><label>Phone</label><input name="phone" /></div>
+    <div class="field-row"><label>College</label><input name="college" /></div>
+    <div class="field-row"><label>Course</label><input name="course" /></div>
+    <div class="field-row"><label>Year</label><input name="year" /></div>
+    <div class="field-row"><label>Portfolio URL</label><input name="portfolioUrl" /></div>
+
+    <button type="submit">Save and continue</button>
+  </form>
+  <p id="status" class="muted"></p>
+</main>
+<script src="/common.js"></script>
+<script>
+(async () => {
+  const me = await fetchMe();
+  if (!me.loggedIn) { window.location.href = "/"; return; }
+  renderHeader(me);
+
+  document.getElementById("onboarding-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const split = (v) => v.split(",").map((s) => s.trim()).filter(Boolean);
+    try {
+      await api("/api/preferences", {
+        method: "POST",
+        body: JSON.stringify({
+          locations: split(f.get("locations")),
+          interests: split(f.get("interests")),
+          eventTypes: split(f.get("eventTypes")),
+          applicantDetails: {
+            fullName: f.get("fullName"),
+            phone: f.get("phone"),
+            college: f.get("college"),
+            course: f.get("course"),
+            year: f.get("year"),
+            portfolioUrl: f.get("portfolioUrl"),
+          },
+        }),
+      });
+      window.location.href = "/";
+    } catch (err) {
+      document.getElementById("status").textContent = err.message;
+    }
+  });
+})();
+</script>
+</body>
+</html>
