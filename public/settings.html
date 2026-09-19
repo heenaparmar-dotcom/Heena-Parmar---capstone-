@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Design World — Settings</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header id="app-header"></header>
+<main>
+  <h1>Settings</h1>
+
+  <div style="margin-bottom:20px;">
+    <button id="tab-profile" class="secondary">Profile</button>
+    <button id="tab-talktome" class="secondary">Talk to me</button>
+  </div>
+
+  <div id="panel-profile">
+    <form id="settings-form">
+      <div class="field-row"><label>Preferred locations (comma-separated)</label><input name="locations" /></div>
+      <div class="field-row"><label>Interests (comma-separated)</label><input name="interests" /></div>
+      <div class="field-row"><label>Event types (comma-separated)</label><input name="eventTypes" /></div>
+      <h2>Your details</h2>
+      <div class="field-row"><label>Full name</label><input name="fullName" /></div>
+      <div class="field-row"><label>Phone</label><input name="phone" /></div>
+      <div class="field-row"><label>College</label><input name="college" /></div>
+      <div class="field-row"><label>Course</label><input name="course" /></div>
+      <div class="field-row"><label>Year</label><input name="year" /></div>
+      <div class="field-row"><label>Portfolio URL</label><input name="portfolioUrl" /></div>
+      <button type="submit">Save changes</button>
+    </form>
+    <p id="status" class="muted"></p>
+  </div>
+
+  <div id="panel-talktome" hidden>
+    <p class="muted">Tell the agent about yourself — your interests, what you're pursuing, projects, skills, anything. It remembers durable facts (not the raw chat) and uses them to answer open-ended application questions it can't otherwise fill in from your profile.</p>
+    <div id="chat-log" style="max-height:320px; overflow-y:auto; margin-bottom:12px;"></div>
+    <form id="chat-form" style="display:flex; gap:8px;">
+      <input id="chat-input" placeholder="e.g. I'm pursuing a BDes in communication design, interested in motion graphics..." style="margin-bottom:0;" />
+      <button type="submit">Send</button>
+    </form>
+    <details style="margin-top:16px;"><summary>What the agent has noted about you</summary>
+      <pre id="profile-notes" class="muted" style="white-space:pre-wrap;"></pre>
+    </details>
+  </div>
+</main>
+<script src="/common.js"></script>
+<script>
+(async () => {
+  const me = await fetchMe();
+  if (!me.loggedIn) { window.location.href = "/"; return; }
+  renderHeader(me);
+
+  const data = await api("/api/preferences");
+  const form = document.getElementById("settings-form");
+  const p = data.preferences || { locations: [], interests: [], eventTypes: [] };
+  const a = data.applicantDetails || {};
+  form.locations.value = (p.locations || []).join(", ");
+  form.interests.value = (p.interests || []).join(", ");
+  form.eventTypes.value = (p.eventTypes || []).join(", ");
+  form.fullName.value = a.fullName || "";
+  form.phone.value = a.phone || "";
+  form.college.value = a.college || "";
+  form.course.value = a.course || "";
+  form.year.value = a.year || "";
+  form.portfolioUrl.value = a.portfolioUrl || "";
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const split = (v) => v.split(",").map((s) => s.trim()).filter(Boolean);
+    try {
+      await api("/api/preferences", {
+        method: "POST",
+        body: JSON.stringify({
+          locations: split(f.get("locations")),
+          interests: split(f.get("interests")),
+          eventTypes: split(f.get("eventTypes")),
+          applicantDetails: {
+            fullName: f.get("fullName"),
+            phone: f.get("phone"),
+            college: f.get("college"),
+            course: f.get("course"),
+            year: f.get("year"),
+            portfolioUrl: f.get("portfolioUrl"),
+          },
+        }),
+      });
+      document.getElementById("status").textContent = "Saved.";
+    } catch (err) {
+      document.getElementById("status").textContent = err.message;
+    }
+  });
+
+  // ---- Talk to me tab ----
+  const tabProfile = document.getElementById("tab-profile");
+  const tabTalkToMe = document.getElementById("tab-talktome");
+  const panelProfile = document.getElementById("panel-profile");
+  const panelTalkToMe = document.getElementById("panel-talktome");
+  const chatLog = document.getElementById("chat-log");
+  const chatForm = document.getElementById("chat-form");
+  const chatInput = document.getElementById("chat-input");
+  const profileNotesEl = document.getElementById("profile-notes");
+
+  function addChatLine(who, text) {
+    const line = document.createElement("div");
+    line.className = "field-row";
+    line.innerHTML = `<strong>${who}:</strong> ${text}`;
+    chatLog.appendChild(line);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  tabProfile.addEventListener("click", () => {
+    panelProfile.hidden = false;
+    panelTalkToMe.hidden = true;
+  });
+  tabTalkToMe.addEventListener("click", async () => {
+    panelProfile.hidden = true;
+    panelTalkToMe.hidden = false;
+    const { profileNotes } = await api("/api/talktome");
+    profileNotesEl.textContent = profileNotes || "(nothing noted yet)";
+  });
+
+  chatForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const message = chatInput.value.trim();
+    if (!message) return;
+    addChatLine("You", message);
+    chatInput.value = "";
+    try {
+      const { reply, profileNotes } = await api("/api/talktome/message", {
+        method: "POST",
+        body: JSON.stringify({ message }),
+      });
+      addChatLine("Agent", reply);
+      profileNotesEl.textContent = profileNotes || "(nothing noted yet)";
+    } catch (err) {
+      addChatLine("Agent", `Error: ${err.message}`);
+    }
+  });
+})();
+</script>
+</body>
+</html>

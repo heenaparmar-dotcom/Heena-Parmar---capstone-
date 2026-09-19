@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Design World — Global Trends</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header id="app-header"></header>
+<main>
+  <h1>Design trends around the world</h1>
+  <p class="muted">Real, live-searched design trends and the designers/projects behind them. Country/city/designer are only shown when the source actually states them — nothing here is guessed.</p>
+  <p id="status" class="status-banner" hidden></p>
+  <div id="trends"></div>
+</main>
+<script src="/common.js"></script>
+<script>
+(async () => {
+  const me = await fetchMe();
+  if (!me.loggedIn) { window.location.href = "/"; return; }
+  renderHeader(me);
+
+  const statusEl = document.getElementById("status");
+  const trendsEl = document.getElementById("trends");
+
+  function showStatus(text, isError) {
+    statusEl.hidden = false;
+    statusEl.textContent = text;
+    statusEl.className = "status-banner" + (isError ? " status-error" : "");
+  }
+
+  showStatus("Searching real sources for current design trends...");
+  try {
+    const data = await api("/api/trends");
+    const trends = data.trends || [];
+    if (trends.length === 0) {
+      showStatus("No trend data found right now. Try again shortly.");
+    } else {
+      statusEl.hidden = true;
+    }
+    trendsEl.innerHTML = trends.map((t) => `
+      <div class="card">
+        <h3 style="margin:0 0 6px;">${t.title}</h3>
+        <p class="muted">
+          ${t.designerName ? `<strong>${t.designerName}</strong>` : "<em>Designer not stated in source</em>"}
+          ${t.city || t.country ? " — " + [t.city, t.country].filter(Boolean).join(", ") : ""}
+        </p>
+        <p>${t.summary || ""}</p>
+        ${t.sourceUrl ? `<a href="${t.sourceUrl}" target="_blank" rel="noopener">Source</a>` : ""}
+      </div>
+    `).join("");
+  } catch (err) {
+    showStatus(err.message, true);
+  }
+})();
+</script>
+</body>
+</html>
