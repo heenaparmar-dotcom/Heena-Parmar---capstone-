@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Design World — Applications</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header id="app-header"></header>
+<main>
+  <h1>Your applications</h1>
+  <button id="check-now" class="secondary">Check Gmail now</button>
+  <p id="check-status" class="muted"></p>
+  <div id="list"></div>
+</main>
+<script src="/common.js"></script>
+<script>
+(async () => {
+  const me = await fetchMe();
+  if (!me.loggedIn) { window.location.href = "/"; return; }
+  renderHeader(me);
+
+  async function load() {
+    const { applications } = await api("/api/applications");
+    const list = document.getElementById("list");
+    if (applications.length === 0) {
+      list.innerHTML = `<p class="muted">No applications yet. Pick events on the landing page and click "Apply on my behalf".</p>`;
+      return;
+    }
+    list.innerHTML = applications.map((a) => `
+      <div class="card">
+        <span class="badge badge-${a.status}">${a.status.replace(/_/g, " ")}</span>
+        <h3>${a.event.name}</h3>
+        <p class="muted">${a.event.venue || ""} ${a.event.date || ""}</p>
+        ${a.calendarEventId ? `<p class="muted">Calendar event: ${a.calendarEventId}</p>` : ""}
+        ${a.status === "needs_manual_action" ? `<p class="muted">${a.note || "Needs manual completion."} <a href="${a.event.url}" target="_blank" rel="noopener">Complete manually here</a>.</p>` : ""}
+        ${Object.keys(a.fields).length > 0 ? `<details><summary>Fields</summary>` : ""}
+          ${Object.entries(a.fields).map(([label, f]) => `
+            <div class="field-row">
+              <label>${label} ${f.source === "agent_generated" ? '<span class="agent-generated-tag">(agent-generated)</span>' : ""}</label>
+              <div>${f.value || "Needs your input"}</div>
+            </div>`).join("")}
+        ${Object.keys(a.fields).length > 0 ? `</details>` : ""}
+      </div>
+    `).join("");
+  }
+
+  document.getElementById("check-now").addEventListener("click", async () => {
+    const statusEl = document.getElementById("check-status");
+    statusEl.textContent = "Checking Gmail...";
+    try {
+      const result = await api("/api/cron/check-applications", { method: "POST" });
+      statusEl.textContent = `Checked ${result.checked} application(s), ${result.changed} status change(s).`;
+      load();
+    } catch (err) {
+      statusEl.textContent = err.message;
+    }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

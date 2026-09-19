@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Design World</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header id="app-header"></header>
+<main id="main">
+  <div id="logged-out" hidden>
+    <h1>Design World</h1>
+    <p class="muted">Sign in with Google to get a personalized top-10 event feed and let the agent apply on your behalf.</p>
+    <a class="btn" href="/auth/google">Sign in with Google</a>
+  </div>
+
+  <div id="logged-in" hidden>
+    <h1>Recommended for you</h1>
+    <p id="status" class="status-banner" hidden></p>
+    <div id="events"></div>
+    <button id="apply-btn" disabled>Apply on my behalf (0 selected)</button>
+  </div>
+</main>
+<script src="/common.js"></script>
+<script>
+(async () => {
+  const me = await fetchMe();
+  renderHeader(me);
+  if (!me.loggedIn) {
+    document.getElementById("logged-out").hidden = false;
+    return;
+  }
+  if (!me.onboarded) {
+    window.location.href = "/onboarding.html";
+    return;
+  }
+  document.getElementById("logged-in").hidden = false;
+
+  const statusEl = document.getElementById("status");
+  const eventsEl = document.getElementById("events");
+  const applyBtn = document.getElementById("apply-btn");
+  let events = [];
+  const selected = new Set();
+
+  function showStatus(text, isError) {
+    statusEl.hidden = false;
+    statusEl.textContent = text;
+    statusEl.className = "status-banner" + (isError ? " status-error" : "");
+  }
+
+  function updateApplyBtn() {
+    applyBtn.textContent = `Apply on my behalf (${selected.size} selected)`;
+    applyBtn.disabled = selected.size === 0;
+  }
+
+  function render() {
+    eventsEl.innerHTML = events.map((e, i) => `
+      <div class="card">
+        <label style="display:flex;gap:10px;align-items:flex-start;">
+          <input type="checkbox" data-index="${i}" style="width:auto;margin-top:4px;" />
+          <span>
+            <h3 style="margin:0;">${e.name}</h3>
+            ${e.announcementOnly ? `<span class="badge badge-pending">Announcement only — no direct registration</span>` : ""}
+            <p class="muted">${e.snippet || ""}</p>
+            <p class="muted"><em>${e.whyMatched || ""}</em></p>
+            <a href="${e.url}" target="_blank" rel="noopener">${e.url}</a>
+          </span>
+        </label>
+      </div>
+    `).join("");
+    eventsEl.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const i = Number(cb.dataset.index);
+        if (cb.checked) selected.add(i); else selected.delete(i);
+        updateApplyBtn();
+      });
+    });
+  }
+
+  showStatus("Searching real sources and ranking against your preferences...");
+  try {
+    const data = await api("/api/events/recommended");
+    events = data.events || [];
+    if (events.length === 0) {
+      showStatus("No matching events found right now. Try widening your preferences in Settings.");
+    } else {
+      statusEl.hidden = true;
+    }
+    render();
+  } catch (err) {
+    showStatus(err.message, true);
+  }
+
+  applyBtn.addEventListener("click", async () => {
+    applyBtn.disabled = true;
+    showStatus("Agent is preparing and submitting applications...");
+    try {
+      const chosen = Array.from(selected).map((i) => events[i]);
+      const result = await api("/api/applications/apply", {
+        method: "POST",
+        body: JSON.stringify({ events: chosen }),
+      });
+      const ok = result.results.filter((r) => r.status === "applied").length;
+      showStatus(`Applied to ${ok}/${result.results.length}. See Applications for details.`);
+      selected.clear();
+      updateApplyBtn();
+    } catch (err) {
+      showStatus(err.message, true);
+      updateApplyBtn();
+    }
+  });
+
+  updateApplyBtn();
+})();
+</script>
+</body>
+</html>
