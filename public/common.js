@@ -14,6 +14,7 @@ function renderHeader(me) {
     <a href="/">Design World</a>
     <nav>
       <a href="/">Discover</a>
+      <a href="/fillform.html">Fill a Form</a>
       <a href="/trends.html">Global Trends</a>
       <a href="/applications.html">Applications</a>
       <a href="/settings.html">Settings</a>
