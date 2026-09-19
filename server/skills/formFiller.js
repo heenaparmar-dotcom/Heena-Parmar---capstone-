@@ -8,11 +8,16 @@ function detectPlatform(url) {
   return "unknown";
 }
 
-// Maps a real DOM question label to a value, using stored applicant details
-// first (never invented), then Groq's typed-question drafting only when the
-// question has no matching stored detail. Mirrors the "never invent
-// structured fields, only draft free-text answers" rule used elsewhere.
-async function resolveAnswer(label, applicantDetails) {
+// Maps a real DOM question label to a value. If `overrideMap` (label ->
+// value, from a previously reviewed fill) has this label, that exact value
+// is reused — no fresh Groq call — so a user-reviewed-then-submitted form
+// contains exactly what they saw, never a re-generated answer. Otherwise
+// falls back to stored applicant details first (never invented), then
+// Groq's typed-question drafting only when nothing stored matches.
+async function resolveAnswer(label, applicantDetails, overrideMap) {
+  if (overrideMap && Object.prototype.hasOwnProperty.call(overrideMap, label)) {
+    return { value: overrideMap[label], source: "reviewed" };
+  }
   const lower = label.toLowerCase();
   const direct = [
     [/name/, applicantDetails.fullName],
@@ -40,7 +45,7 @@ async function resolveAnswer(label, applicantDetails) {
 // paragraph text questions are auto-filled; choice questions are left
 // unanswered (flagged) since guessing an option is a fabrication risk this
 // project explicitly avoids.
-async function fillGoogleForm(page, applicantDetails) {
+async function fillGoogleForm(page, applicantDetails, overrideMap) {
   const items = await page.locator('div[role="listitem"]').all();
   const filled = [];
   const skipped = [];
@@ -52,7 +57,7 @@ async function fillGoogleForm(page, applicantDetails) {
 
     const textInput = item.locator("input[type='text'], textarea").first();
     if (await textInput.count()) {
-      const { value, source } = await resolveAnswer(label, applicantDetails);
+      const { value, source } = await resolveAnswer(label, applicantDetails, overrideMap);
       if (value) {
         await textInput.fill(String(value));
         filled.push({ label, value, source });
@@ -68,13 +73,13 @@ async function fillGoogleForm(page, applicantDetails) {
     }
   }
 
-  return { filled, skipped };
+  return { filled, skipped, submitLocator: page.getByRole("button", { name: /submit/i }).first() };
 }
 
 // Fills Luma's registration modal. Its fields are real <input>/<textarea>
 // elements with a preceding <label> sibling in the same container — no
 // aria-labelledby, so the label is found by DOM proximity.
-async function fillLumaForm(page, applicantDetails) {
+async function fillLumaForm(page, applicantDetails, overrideMap) {
   await page.getByRole("button", { name: "Register", exact: true }).first().click();
   await page.waitForTimeout(1000);
 
@@ -88,7 +93,7 @@ async function fillLumaForm(page, applicantDetails) {
     const label = (labelText || (await input.getAttribute("placeholder")) || "").replace(/\*/g, "").trim();
     if (!label) continue;
 
-    const { value, source } = await resolveAnswer(label, applicantDetails);
+    const { value, source } = await resolveAnswer(label, applicantDetails, overrideMap);
     if (value) {
       await input.fill(String(value));
       filled.push({ label, value, source });
@@ -149,4 +154,62 @@ async function attemptAutoFill(url, applicantDetails) {
   }
 }
 
-module.exports = { attemptAutoFill, detectPlatform };
+// Fills a real form and stops — never clicks submit, always returns a
+// screenshot, regardless of how many fields were confidently filled. Used
+// by the "paste a link, review, then press Submit yourself" flow, where
+// the human is the approval gate instead of the "all fields confident"
+// auto-rule.
+async function fillOnly(url, applicantDetails) {
+  const platform = detectPlatform(url);
+  if (platform === "unknown") {
+    return { platform, ok: false, reason: "Not a recognized form platform (Google Forms / Luma)." };
+  }
+
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
+
+    const { filled, skipped } =
+      platform === "google_forms" ? await fillGoogleForm(page, applicantDetails) : await fillLumaForm(page, applicantDetails);
+
+    console.log(`[form-filler] preview-fill ${platform} — filled ${filled.length}, skipped ${skipped.length}`);
+    const screenshotBuffer = await page.screenshot();
+    return { platform, ok: filled.length > 0, filled, skipped, screenshot: screenshotBuffer.toString("base64") };
+  } finally {
+    await browser.close();
+  }
+}
+
+// Re-opens the real form and re-fills it using the EXACT values the user
+// already reviewed (via overrideMap — no new Groq calls, no chance of a
+// different answer sneaking in), then clicks the real submit button. This
+// is the only place a user-initiated (as opposed to auto-confidence-gated)
+// submission happens, and it only runs when the user explicitly presses
+// Submit on the reviewed preview.
+async function submitFilledForm(url, applicantDetails, reviewedFields) {
+  const platform = detectPlatform(url);
+  const overrideMap = {};
+  for (const f of reviewedFields) overrideMap[f.label] = f.value;
+
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
+
+    const { submitLocator } =
+      platform === "google_forms"
+        ? await fillGoogleForm(page, applicantDetails, overrideMap)
+        : await fillLumaForm(page, applicantDetails, overrideMap);
+
+    if (!submitLocator) throw new Error("Could not locate a submit button on the real page.");
+    await submitLocator.click();
+    await page.waitForTimeout(1500);
+    console.log(`[form-filler] user-approved submit — ${platform} — submitted.`);
+    return { platform, submitted: true };
+  } finally {
+    await browser.close();
+  }
+}
+
+module.exports = { attemptAutoFill, fillOnly, submitFilledForm, detectPlatform };
