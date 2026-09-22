@@ -7,17 +7,18 @@ function renderHeader(me) {
   const el = document.getElementById("app-header");
   if (!el) return;
   if (!me.loggedIn) {
-    el.innerHTML = `<a href="/">Design World</a><nav><a href="/auth/google">Sign in with Google</a></nav>`;
+    el.innerHTML = `<a href="/" class="wordmark">Design World</a><nav><a href="/auth/google">Sign in with Google</a></nav>`;
     return;
   }
   el.innerHTML = `
-    <a href="/">Design World</a>
+    <a href="/" class="wordmark">Design World</a>
     <nav>
-      <a href="/">Discover</a>
-      <a href="/fillform.html">Fill a Form</a>
-      <a href="/trends.html">Global Trends</a>
+      <a href="/events.html">Events</a>
+      <a href="/discover.html">Discover</a>
+      <a href="/trends.html">Trends</a>
       <a href="/applications.html">Applications</a>
       <a href="/settings.html">Settings</a>
+      <a href="/" class="talk-to-me-link">Talk to Me</a>
       <span class="muted">${me.name}</span>
       <a href="/auth/logout">Sign out</a>
     </nav>`;

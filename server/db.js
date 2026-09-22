@@ -45,6 +45,13 @@ db.exec(`
     applied_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_checked_at TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS chat_state (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id),
+    context_json TEXT NOT NULL DEFAULT '{}',
+    messages_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 const applicationColumns = db.prepare("PRAGMA table_info(applications)").all().map((c) => c.name);
@@ -166,6 +173,26 @@ function deserializeApplication(row) {
   };
 }
 
+// Real server-side conversation state for the "Talk to Me" agent — one row
+// per user, survives navigation and browser restarts. Deliberately separate
+// from applicant_details/preferences: chat context is never read by the
+// application-filling code, so a casual remark in conversation never
+// silently becomes permanent profile data.
+function getChatState(userId) {
+  const row = db.prepare("SELECT * FROM chat_state WHERE user_id = ?").get(userId);
+  if (!row) return { context: {}, messages: [] };
+  return { context: JSON.parse(row.context_json), messages: JSON.parse(row.messages_json) };
+}
+
+function saveChatState(userId, { context, messages }) {
+  db.prepare(
+    `INSERT INTO chat_state (user_id, context_json, messages_json, updated_at)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(user_id) DO UPDATE SET context_json=excluded.context_json,
+       messages_json=excluded.messages_json, updated_at=excluded.updated_at`
+  ).run(userId, JSON.stringify(context), JSON.stringify(messages));
+}
+
 module.exports = {
   db,
   upsertUser,
@@ -180,4 +207,6 @@ module.exports = {
   listApplicationsForUser,
   listPendingApplications,
   updateApplicationStatus,
+  getChatState,
+  saveChatState,
 };
