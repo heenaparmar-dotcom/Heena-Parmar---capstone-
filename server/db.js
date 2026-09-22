@@ -142,8 +142,13 @@ function listApplicationsForUser(userId) {
   return db.prepare("SELECT * FROM applications WHERE user_id = ? ORDER BY applied_at DESC").all(userId).map(deserializeApplication);
 }
 
+// "Pending" here means "submitted and awaiting the organizer's reply" —
+// that's status 'applied' in this schema (set once a real submission, agent
+// or user-confirmed, actually happened). Applications still sitting at
+// 'needs_manual_action' haven't been submitted anywhere yet, so there's
+// nothing for the Gmail check to find a reply to.
 function listPendingApplications() {
-  return db.prepare("SELECT * FROM applications WHERE status = 'pending'").all().map(deserializeApplication);
+  return db.prepare("SELECT * FROM applications WHERE status = 'applied'").all().map(deserializeApplication);
 }
 
 function updateApplicationStatus(id, status, { calendarEventId } = {}) {
