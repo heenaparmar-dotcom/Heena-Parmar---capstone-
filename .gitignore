@@ -5,6 +5,10 @@
 # Dependencies
 node_modules/
 
+# Local SQLite database (contains real user data, including Google
+# refresh tokens) — never commit this.
+data/
+
 # OS files
 .DS_Store
 Thumbs.db
