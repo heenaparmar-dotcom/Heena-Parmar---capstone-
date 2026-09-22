@@ -4,7 +4,7 @@ const groq = require("../services/groq");
 const db = require("../db");
 const { extractFormLabels } = require("../utils/extractFormLabels");
 const { blockCalendarForEvent } = require("../services/googleCalendar");
-const { attemptAutoFill, detectPlatform } = require("../skills/formFiller");
+const { attemptAutoFill, fillOnly, detectPlatform } = require("../skills/formFiller");
 const { isPaidEvent } = require("../utils/detectPaidEvent");
 const { sendApplicationConfirmation } = require("../services/gmail");
 
@@ -80,23 +80,14 @@ async function applyToOneEvent(user, event, applicantDetails) {
     pageText = await mcp.extractPage(event.url);
   }
 
-  if (isPaidEvent(pageText)) {
-    console.log(`[agent] "${event.name}" looks like a paid event — routing to manual completion, no auto-apply.`);
-    const note = "This looks like a paid event. The agent never handles payment — complete registration manually.";
-    const application = db.createApplication(user.id, event, {}, "needs_manual_action", note);
-    return {
-      applicationId: application.id,
-      event,
-      fields: {},
-      agentGenerated: [],
-      status: "needs_manual_action",
-      note: "This looks like a paid event. The agent never handles payment — complete registration manually.",
-      calendarEventId: null,
-      calendarError: null,
-    };
+  const platform = detectPlatform(event.url);
+  const paid = isPaidEvent(pageText);
+
+  if (paid) {
+    console.log(`[agent] "${event.name}" looks like a paid event — filling the registration form for review, but never submitting or handling payment.`);
+    return applyPaidEventForReview(user, event, applicantDetails, platform);
   }
 
-  const platform = detectPlatform(event.url);
   if (platform !== "unknown") {
     return applyViaFormFiller(user, event, applicantDetails, platform);
   }
@@ -164,6 +155,32 @@ async function applyToOneEvent(user, event, applicantDetails) {
   };
 }
 
+// Paid events: the agent still fills the real registration form (Google
+// Forms/Luma) for the user to review — genuinely useful, saves them typing
+// — but NEVER submits it and NEVER touches payment. Status always stays
+// needs_manual_action; the user completes registration (and payment)
+// themselves, then can mark it "submitted" once they have, which is what
+// makes the real Gmail approval/rejection tracking start watching it.
+async function applyPaidEventForReview(user, event, applicantDetails, platform) {
+  const note =
+    "This looks like a paid event. The agent never handles payment, but filled the form below for you to review. " +
+    "Complete registration (and payment) manually, then mark it as submitted to get real email approval tracking.";
+
+  if (platform === "unknown") {
+    const application = db.createApplication(user.id, event, {}, "needs_manual_action", note);
+    return { applicationId: application.id, event, fields: {}, agentGenerated: [], status: "needs_manual_action", note, calendarEventId: null, calendarError: null };
+  }
+
+  const result = await fillOnly(event.url, { ...applicantDetails, email: user.email });
+  const fields = {};
+  for (const f of result.filled || []) fields[f.label] = { value: f.value, source: f.source };
+  for (const s of result.skipped || []) fields[s.label] = { value: null, source: "needs_input" };
+  const agentGenerated = (result.filled || []).filter((f) => f.source === "agent_generated").map((f) => f.label);
+
+  const application = db.createApplication(user.id, event, fields, "needs_manual_action", note);
+  return { applicationId: application.id, event, fields, agentGenerated, status: "needs_manual_action", note, calendarEventId: null, calendarError: null };
+}
+
 // Real browser automation path (Google Forms / Luma) — opens the actual
 // registration page in headless Chromium, fills only confidently-resolved
 // fields, and auto-submits ONLY when every discovered field was filled
@@ -228,6 +245,29 @@ function fallbackKeywordMap(labels, applicantDetails, fields) {
 
 router.get("/", (req, res) => {
   res.json({ applications: db.listApplicationsForUser(req.user.id) });
+});
+
+// POST /api/applications/:id/mark-submitted — for applications the agent
+// couldn't submit itself (paid events, unsupported sites): the user
+// confirms THEY completed registration in the real world. Only then does
+// the daily/manual Gmail check start watching for a reply, since only now
+// is there something real to expect a reply about. Never called by the
+// agent itself — only ever a genuine user action.
+router.post("/:id/mark-submitted", async (req, res) => {
+  const application = db.getApplicationById(Number(req.params.id));
+  if (!application || application.userId !== req.user.id) {
+    return res.status(404).json({ error: "Application not found." });
+  }
+
+  let calendarEventId = null;
+  try {
+    calendarEventId = await blockCalendarForEvent(req.user, application.event);
+  } catch (err) {
+    console.log(`[applications] Calendar block on manual-submit skipped: ${err.message}`);
+  }
+
+  const updated = db.updateApplicationStatus(application.id, "applied", { calendarEventId });
+  res.json({ application: updated });
 });
 
 module.exports = router;

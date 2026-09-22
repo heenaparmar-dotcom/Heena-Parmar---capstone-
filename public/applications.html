@@ -41,8 +41,24 @@
               <div>${f.value || "Needs your input"}</div>
             </div>`).join("")}
         ${Object.keys(a.fields).length > 0 ? `</details>` : ""}
+        ${a.status === "needs_manual_action" ? `<button class="secondary mark-submitted-btn" data-id="${a.id}">I completed this manually</button>` : ""}
       </div>
     `).join("");
+
+    list.querySelectorAll(".mark-submitted-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        btn.textContent = "Marking...";
+        try {
+          await api(`/api/applications/${btn.dataset.id}/mark-submitted`, { method: "POST" });
+          load();
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = "I completed this manually";
+          alert(err.message);
+        }
+      });
+    });
   }
 
   document.getElementById("check-now").addEventListener("click", async () => {
