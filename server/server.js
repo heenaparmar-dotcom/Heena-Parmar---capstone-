@@ -17,6 +17,8 @@ const applicationsRouter = require("./routes/applications");
 const trendsRouter = require("./routes/trends");
 const talkToMeRouter = require("./routes/talktome");
 const formReviewRouter = require("./routes/formReview");
+const chatRouter = require("./routes/chat");
+const discoverRouter = require("./routes/discover");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -78,6 +80,8 @@ app.use("/api/applications", requireAuth, applicationsRouter);
 app.use("/api/trends", requireAuth, trendsRouter);
 app.use("/api/talktome", requireAuth, talkToMeRouter);
 app.use("/api/form-review", requireAuth, formReviewRouter);
+app.use("/api/chat", requireAuth, chatRouter);
+app.use("/api/discover", requireAuth, discoverRouter);
 
 // ---- Health endpoint — real config booleans, never secret values ----
 app.get("/api/health", async (req, res) => {

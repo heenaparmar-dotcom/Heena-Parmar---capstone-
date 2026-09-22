@@ -155,6 +155,68 @@ async function updateProfileFromChat(existingNotes, userMessage) {
   return result;
 }
 
+// "Talk to Me" — merges a new chat message into existing conversation
+// context, resolving references to earlier turns ("only weekend ones" ->
+// applies as a filter on the previously-discussed workshops/location)
+// without requiring the user to repeat themselves. Classifies intent so the
+// agent knows whether to run a real workshop search, a trends lookup, a
+// discover lookup, or just reply conversationally. This is the one place a
+// genuine judgment call (reference resolution) is needed — not deterministic
+// parsing.
+async function updateChatContext(existingContext, recentMessages, newMessage) {
+  const system =
+    "You maintain conversation context for Design World's discovery agent. Given the existing context, " +
+    "the recent conversation, and a new user message, resolve any references to earlier turns " +
+    "(e.g. 'only weekend ones' refers to a previously discussed search) and produce updated context. " +
+    "Classify intent as exactly one of: workshops, trends, discover, chat. " +
+    "'workshops' = the user wants real events/workshops/competitions found or filtered. " +
+    "'trends' = the user wants design trend information. 'discover' = the user wants designers/projects/inspiration. " +
+    "'chat' = general conversation not requiring a search. " +
+    'Respond with JSON: {"intent": "workshops"|"trends"|"discover"|"chat", ' +
+    '"context": {"topic": string|null, "location": string|null, "audience": string|null, "eventType": string|null, "filters": string|null}, ' +
+    '"searchQuery": "<a concrete search query string if intent is workshops/trends/discover, else null>"}. ' +
+    "Merge with existing context fields when the new message doesn't override them; null out a field only if the user explicitly changed topic.";
+  const userPrompt = JSON.stringify({ existingContext, recentMessages: recentMessages.slice(-8), newMessage });
+  const result = await generateJson(system, userPrompt);
+  if (!["workshops", "trends", "discover", "chat"].includes(result.intent) || typeof result.context !== "object") {
+    throw new Error("Groq updateChatContext returned an unexpected shape.");
+  }
+  return result;
+}
+
+// Plain conversational reply grounded in context — used when intent is
+// "chat" (no search/tool call needed) or to frame search results back to
+// the user in natural language. Told explicitly to only reference real
+// data it was given, never invent workshop/trend/designer details.
+async function chatReply(context, recentMessages, newMessage, groundingData) {
+  const system =
+    "You are the Design World discovery agent, replying conversationally. " +
+    "If groundingData is provided, base your reply only on it — never invent details (dates, venues, names) " +
+    "not present in groundingData. If no groundingData is provided, have a natural, brief, helpful conversation " +
+    'about design topics. Respond with JSON: {"reply": "<short, natural reply>"}.';
+  const userPrompt = JSON.stringify({ context, recentMessages: recentMessages.slice(-8), newMessage, groundingData: groundingData || null });
+  const result = await generateJson(system, userPrompt);
+  if (typeof result.reply !== "string") throw new Error("Groq chatReply returned an unexpected shape.");
+  return result.reply;
+}
+
+// Structures real MCP image-search results into Discover items (designer/
+// project name, category, location if stated, summary, source, image).
+// Same discipline as extractTrends: null for anything not actually stated.
+async function extractDiscoverItems(rawText) {
+  const system =
+    "You extract real designer/design-project items from real web search result text (which includes image URLs). " +
+    "For each distinct designer or project mentioned, extract only facts actually stated in the text. " +
+    "If country, city, or category isn't stated, use null — never guess. Only include imageUrl if one was actually " +
+    "provided in the source text for that item, else null. " +
+    'Respond with JSON: {"items": [{"title": "<designer or project name>", "category": string|null, ' +
+    '"city": string|null, "country": string|null, "summary": "<1-2 sentence summary from the source text>", ' +
+    '"sourceUrl": "<url from the text>", "imageUrl": string|null}]}, at most 10 items.';
+  const result = await generateJson(system, rawText.slice(0, 6000));
+  if (!Array.isArray(result.items)) throw new Error("Groq extractDiscoverItems returned an unexpected shape.");
+  return result.items;
+}
+
 module.exports = {
   generateJson,
   rankEvents,
@@ -163,5 +225,8 @@ module.exports = {
   classifyEmailReply,
   extractTrends,
   updateProfileFromChat,
+  updateChatContext,
+  chatReply,
+  extractDiscoverItems,
   GroqUnavailableError,
 };

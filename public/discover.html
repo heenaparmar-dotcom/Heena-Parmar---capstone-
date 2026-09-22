@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Design World — Discover</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header id="app-header"></header>
+<main>
+  <h1>Discover</h1>
+  <p class="muted">Real, live-searched designers and design projects. Category/city/country are only shown when the source actually states them.</p>
+  <p id="status" class="status-banner" hidden></p>
+  <div id="grid" class="discover-grid"></div>
+</main>
+<script src="/common.js"></script>
+<script>
+(async () => {
+  const me = await fetchMe();
+  if (!me.loggedIn) { window.location.href = "/"; return; }
+  renderHeader(me);
+
+  const statusEl = document.getElementById("status");
+  const gridEl = document.getElementById("grid");
+
+  function showStatus(text, isError) {
+    statusEl.hidden = false;
+    statusEl.textContent = text;
+    statusEl.className = "status-banner" + (isError ? " status-error" : "");
+  }
+
+  showStatus("Searching real sources for designers and projects...");
+  try {
+    const data = await api("/api/discover");
+    const items = data.items || [];
+    if (items.length === 0) {
+      showStatus("No results found right now. Try again shortly.");
+    } else {
+      statusEl.hidden = true;
+    }
+    gridEl.innerHTML = items.map((it) => `
+      <div class="card">
+        ${it.imageUrl ? `<img src="${it.imageUrl}" alt="" onerror="this.remove()" />` : ""}
+        ${it.category ? `<span class="badge">${it.category}</span>` : ""}
+        <h3>${it.title}</h3>
+        <p class="muted">${[it.city, it.country].filter(Boolean).join(", ") || "<em>Location not stated in source</em>"}</p>
+        <p>${it.summary || ""}</p>
+        ${it.sourceUrl ? `<a href="${it.sourceUrl}" target="_blank" rel="noopener">Source</a>` : ""}
+      </div>
+    `).join("");
+  } catch (err) {
+    showStatus(err.message, true);
+  }
+})();
+</script>
+</body>
+</html>
