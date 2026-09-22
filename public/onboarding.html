@@ -8,7 +8,13 @@
 <body>
 <header id="app-header"></header>
 <main>
-  <h1>Tell us what you're looking for</h1>
+  <h1>Design World</h1>
+
+  <h2>Global design trends</h2>
+  <p id="trends-status" class="status-banner" hidden></p>
+  <div id="trends-preview"></div>
+
+  <h2 style="margin-top:32px;">Tell us what you're looking for</h2>
   <p class="muted">This drives your personalized top-10 feed and lets the agent apply on your behalf. Nothing here is shared beyond this app.</p>
 
   <form id="onboarding-form">
@@ -43,6 +49,34 @@
   const me = await fetchMe();
   if (!me.loggedIn) { window.location.href = "/"; return; }
   renderHeader(me);
+
+  const trendsStatus = document.getElementById("trends-status");
+  const trendsPreview = document.getElementById("trends-preview");
+  trendsStatus.hidden = false;
+  trendsStatus.textContent = "Searching real sources for current design trends...";
+  try {
+    const data = await api("/api/trends");
+    const trends = data.trends || [];
+    if (trends.length === 0) {
+      trendsStatus.textContent = "No trend data found right now.";
+    } else {
+      trendsStatus.hidden = true;
+    }
+    trendsPreview.innerHTML = trends.slice(0, 4).map((t) => `
+      <div class="card">
+        <h3 style="margin:0 0 6px;">${t.title}</h3>
+        <p class="muted">
+          ${t.designerName ? `<strong>${t.designerName}</strong>` : "<em>Designer not stated in source</em>"}
+          ${t.city || t.country ? " — " + [t.city, t.country].filter(Boolean).join(", ") : ""}
+        </p>
+        <p>${t.summary || ""}</p>
+        ${t.sourceUrl ? `<a href="${t.sourceUrl}" target="_blank" rel="noopener">Source</a>` : ""}
+      </div>
+    `).join("");
+  } catch (err) {
+    trendsStatus.textContent = err.message;
+    trendsStatus.className = "status-banner status-error";
+  }
 
   document.getElementById("onboarding-form").addEventListener("submit", async (e) => {
     e.preventDefault();
