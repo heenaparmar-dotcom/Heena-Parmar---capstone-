@@ -55,24 +55,28 @@ router.post("/apply", async (req, res) => {
   res.json({ results });
 });
 
+// Real page text often states a date/venue even when there's no
+// registration form (a social post, a paid event, an unsupported site).
+// This attempts to block the user's calendar honestly: extracts only what
+// the text actually states (Groq, never guesses), and only calls the real
+// Calendar API if a date was actually found. Failures are non-fatal —
+// callers just report calendarError.
+async function attemptCalendarBlockFromPage(user, event, pageText) {
+  if (!pageText) return { calendarEventId: null, calendarError: null };
+  try {
+    const { date, startTime, endTime, venue } = await groq.extractEventDateTime(pageText);
+    if (!date) return { calendarEventId: null, calendarError: null };
+    console.log(`[agent] Extracted real date "${date}" for "${event.name}" — blocking calendar.`);
+    const calendarEventId = await blockCalendarForEvent(user, { ...event, date, startTime, endTime, venue: venue || event.venue });
+    return { calendarEventId, calendarError: null };
+  } catch (err) {
+    console.log(`[agent] Calendar block from page text skipped: ${err.message}`);
+    return { calendarEventId: null, calendarError: err.message };
+  }
+}
+
 async function applyToOneEvent(user, event, applicantDetails) {
   console.log(`[agent] PERCEIVE — preparing application for "${event.name}"`);
-
-  if (event.announcementOnly) {
-    console.log(`[agent] "${event.name}" is a social-media announcement, not a registration page — skipping auto-apply.`);
-    const note = "This is a social-media announcement, not a registration page. No form to fill automatically.";
-    const application = db.createApplication(user.id, event, {}, "needs_manual_action", note);
-    return {
-      applicationId: application.id,
-      event,
-      fields: {},
-      agentGenerated: [],
-      status: "needs_manual_action",
-      note,
-      calendarEventId: null,
-      calendarError: null,
-    };
-  }
 
   let pageText = "";
   if (event.url) {
@@ -80,12 +84,31 @@ async function applyToOneEvent(user, event, applicantDetails) {
     pageText = await mcp.extractPage(event.url);
   }
 
+  if (event.announcementOnly) {
+    console.log(`[agent] "${event.name}" is a social-media announcement, not a registration page — no form to auto-fill.`);
+    let note = "This is a social-media announcement, not a registration page. No form to fill automatically.";
+    const { calendarEventId, calendarError } = await attemptCalendarBlockFromPage(user, event, pageText);
+    if (calendarEventId) note += " A real date was found, so it's been added to your calendar.";
+    const application = db.createApplication(user.id, event, {}, "needs_manual_action", note);
+    if (calendarEventId) db.updateApplicationStatus(application.id, "needs_manual_action", { calendarEventId });
+    return {
+      applicationId: application.id,
+      event,
+      fields: {},
+      agentGenerated: [],
+      status: "needs_manual_action",
+      note,
+      calendarEventId,
+      calendarError,
+    };
+  }
+
   const platform = detectPlatform(event.url);
   const paid = isPaidEvent(pageText);
 
   if (paid) {
     console.log(`[agent] "${event.name}" looks like a paid event — filling the registration form for review, but never submitting or handling payment.`);
-    return applyPaidEventForReview(user, event, applicantDetails, platform);
+    return applyPaidEventForReview(user, event, applicantDetails, platform, pageText);
   }
 
   if (platform !== "unknown") {
@@ -137,12 +160,16 @@ async function applyToOneEvent(user, event, applicantDetails) {
   // actually sent to the site. Always needs_manual_action here; the
   // detected fields are shown only as a reference to copy from.
   const hasReliableFields = labels.length > 0;
-  const note = hasReliableFields
+  let note = hasReliableFields
     ? "This site isn't one the agent can auto-submit to yet (only Google Forms and Luma are supported). Fields below are detected for reference — complete registration manually."
     : "Could not reliably detect application form fields on this page automatically. Ready for manual completion.";
   console.log(`[agent] REASON — ${Object.keys(fields).length} field(s) detected for reference — no real submission path, manual action required`);
 
+  const { calendarEventId, calendarError } = await attemptCalendarBlockFromPage(user, event, pageText);
+  if (calendarEventId) note += " A real date was found, so it's been added to your calendar.";
+
   const application = db.createApplication(user.id, event, fields, "needs_manual_action", note);
+  if (calendarEventId) db.updateApplicationStatus(application.id, "needs_manual_action", { calendarEventId });
   return {
     applicationId: application.id,
     event,
@@ -150,8 +177,8 @@ async function applyToOneEvent(user, event, applicantDetails) {
     agentGenerated,
     status: "needs_manual_action",
     note,
-    calendarEventId: null,
-    calendarError: null,
+    calendarEventId,
+    calendarError,
   };
 }
 
@@ -161,24 +188,26 @@ async function applyToOneEvent(user, event, applicantDetails) {
 // needs_manual_action; the user completes registration (and payment)
 // themselves, then can mark it "submitted" once they have, which is what
 // makes the real Gmail approval/rejection tracking start watching it.
-async function applyPaidEventForReview(user, event, applicantDetails, platform) {
-  const note =
+async function applyPaidEventForReview(user, event, applicantDetails, platform, pageText) {
+  let note =
     "This looks like a paid event. The agent never handles payment, but filled the form below for you to review. " +
     "Complete registration (and payment) manually, then mark it as submitted to get real email approval tracking.";
 
-  if (platform === "unknown") {
-    const application = db.createApplication(user.id, event, {}, "needs_manual_action", note);
-    return { applicationId: application.id, event, fields: {}, agentGenerated: [], status: "needs_manual_action", note, calendarEventId: null, calendarError: null };
+  const fields = {};
+  let agentGenerated = [];
+  if (platform !== "unknown") {
+    const result = await fillOnly(event.url, { ...applicantDetails, email: user.email });
+    for (const f of result.filled || []) fields[f.label] = { value: f.value, source: f.source };
+    for (const s of result.skipped || []) fields[s.label] = { value: null, source: "needs_input" };
+    agentGenerated = (result.filled || []).filter((f) => f.source === "agent_generated").map((f) => f.label);
   }
 
-  const result = await fillOnly(event.url, { ...applicantDetails, email: user.email });
-  const fields = {};
-  for (const f of result.filled || []) fields[f.label] = { value: f.value, source: f.source };
-  for (const s of result.skipped || []) fields[s.label] = { value: null, source: "needs_input" };
-  const agentGenerated = (result.filled || []).filter((f) => f.source === "agent_generated").map((f) => f.label);
+  const { calendarEventId, calendarError } = await attemptCalendarBlockFromPage(user, event, pageText);
+  if (calendarEventId) note += " A real date was found, so it's been added to your calendar.";
 
   const application = db.createApplication(user.id, event, fields, "needs_manual_action", note);
-  return { applicationId: application.id, event, fields, agentGenerated, status: "needs_manual_action", note, calendarEventId: null, calendarError: null };
+  if (calendarEventId) db.updateApplicationStatus(application.id, "needs_manual_action", { calendarEventId });
+  return { applicationId: application.id, event, fields, agentGenerated, status: "needs_manual_action", note, calendarEventId, calendarError };
 }
 
 // Real browser automation path (Google Forms / Luma) — opens the actual

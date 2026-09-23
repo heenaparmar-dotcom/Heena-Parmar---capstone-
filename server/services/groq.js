@@ -217,9 +217,36 @@ async function extractDiscoverItems(rawText) {
   return result.items;
 }
 
+// Extracts a real, explicitly-stated date/time/venue from real page text —
+// used to block a user's calendar even when there's no registration form
+// to fill (e.g. a social-media announcement). Only returns a field if the
+// text actually states it; never infers or guesses a date/time.
+async function extractEventDateTime(text) {
+  const system =
+    "You extract an UPCOMING event's date, start time, end time, and venue from real page text — ONLY if the text " +
+    "is actually announcing a future event happening on that date. " +
+    "Critical distinctions: (1) A 'photo posted on <date>' or 'photo by X on <date>' caption is the POST's publish " +
+    "date, NOT the event's date — never use it as the event date. (2) Text written in past tense describing what " +
+    "already happened ('students had an amazing time', 'we explored...', a recap/highlights post) is NOT an " +
+    "upcoming event — return all fields null for it, even if a date appears somewhere in the text. " +
+    "Today's date context may help resolve a relative date like 'this Saturday', but never invent an absolute date " +
+    "that isn't grounded in stated information about a genuinely future event. " +
+    'Respond with JSON: {"date": "YYYY-MM-DD"|null, "startTime": "HH:MM"|null, "endTime": "HH:MM"|null, "venue": string|null}. ' +
+    "Use 24-hour time. If you cannot confidently determine a field, use null for it.";
+  const userPrompt = JSON.stringify({ today: new Date().toISOString().slice(0, 10), text: text.slice(0, 4000) });
+  const result = await generateJson(system, userPrompt);
+  return {
+    date: result.date || null,
+    startTime: result.startTime || null,
+    endTime: result.endTime || null,
+    venue: result.venue || null,
+  };
+}
+
 module.exports = {
   generateJson,
   rankEvents,
+  extractEventDateTime,
   mapApplicationFields,
   draftFreeTextAnswer,
   classifyEmailReply,
