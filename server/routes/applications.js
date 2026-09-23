@@ -3,7 +3,7 @@ const mcp = require("../mcp/tavilyClient");
 const groq = require("../services/groq");
 const db = require("../db");
 const { extractFormLabels } = require("../utils/extractFormLabels");
-const { blockCalendarForEvent } = require("../services/googleCalendar");
+const { blockCalendarForEvent, deleteCalendarEvent } = require("../services/googleCalendar");
 const { attemptAutoFill, fillOnly, detectPlatform } = require("../skills/formFiller");
 const { isPaidEvent } = require("../utils/detectPaidEvent");
 const { sendApplicationConfirmation } = require("../services/gmail");
@@ -297,6 +297,25 @@ router.post("/:id/mark-submitted", async (req, res) => {
 
   const updated = db.updateApplicationStatus(application.id, "applied", { calendarEventId });
   res.json({ application: updated });
+});
+
+// DELETE /api/applications/:id — removes an application record (e.g. one
+// created from a bad search candidate). If it has a real calendar event,
+// removes that too rather than leaving an orphaned calendar entry.
+router.delete("/:id", async (req, res) => {
+  const application = db.getApplicationById(Number(req.params.id));
+  if (!application || application.userId !== req.user.id) {
+    return res.status(404).json({ error: "Application not found." });
+  }
+  if (application.calendarEventId) {
+    try {
+      await deleteCalendarEvent(req.user, application.calendarEventId);
+    } catch (err) {
+      console.log(`[applications] Calendar cleanup on delete skipped: ${err.message}`);
+    }
+  }
+  db.deleteApplication(application.id);
+  res.json({ deleted: true });
 });
 
 module.exports = router;

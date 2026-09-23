@@ -142,6 +142,10 @@ function listApplicationsForUser(userId) {
   return db.prepare("SELECT * FROM applications WHERE user_id = ? ORDER BY applied_at DESC").all(userId).map(deserializeApplication);
 }
 
+function deleteApplication(id) {
+  db.prepare("DELETE FROM applications WHERE id = ?").run(id);
+}
+
 // "Pending" here means "submitted and awaiting the organizer's reply" —
 // that's status 'applied' in this schema (set once a real submission, agent
 // or user-confirmed, actually happened). Applications still sitting at
@@ -210,6 +214,7 @@ module.exports = {
   createApplication,
   getApplicationById,
   listApplicationsForUser,
+  deleteApplication,
   listPendingApplications,
   updateApplicationStatus,
   getChatState,

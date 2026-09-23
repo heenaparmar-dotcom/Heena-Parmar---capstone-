@@ -58,6 +58,10 @@ async function rankEvents(candidates, preferences) {
   const system =
     "You rank real event/workshop search results against a user's stated preferences. " +
     "You must ONLY use the candidates given to you — never invent an event that is not in the list. " +
+    "Exclude any candidate that is NOT actually an event/workshop/competition listing — in particular, exclude " +
+    "personal testimonials, reviews, LinkedIn/Instagram posts written in first person about someone's own past " +
+    "experience ('I am happy to share...', 'I had a great time...'), and generic articles. Only include candidates " +
+    "that are genuinely announcing or describing a specific event someone could attend or apply to. " +
     'Respond with JSON: {"ranked": [{"index": <candidate index>, "whyMatched": "<short reason>"}]}, ' +
     "at most 10 items, best matches first. If a candidate doesn't genuinely match, omit it.";
   const userPrompt = JSON.stringify({ preferences, candidates });
