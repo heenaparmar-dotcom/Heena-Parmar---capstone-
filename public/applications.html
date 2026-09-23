@@ -41,7 +41,10 @@
               <div>${f.value || "Needs your input"}</div>
             </div>`).join("")}
         ${Object.keys(a.fields).length > 0 ? `</details>` : ""}
-        ${a.status === "needs_manual_action" ? `<button class="secondary mark-submitted-btn" data-id="${a.id}">I completed this manually</button>` : ""}
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          ${a.status === "needs_manual_action" ? `<button class="secondary mark-submitted-btn" data-id="${a.id}">I completed this manually</button>` : ""}
+          <button class="secondary delete-btn" data-id="${a.id}">Remove</button>
+        </div>
       </div>
     `).join("");
 
@@ -55,6 +58,20 @@
         } catch (err) {
           btn.disabled = false;
           btn.textContent = "I completed this manually";
+          alert(err.message);
+        }
+      });
+    });
+
+    list.querySelectorAll(".delete-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Remove this application? This also removes its calendar entry, if any.")) return;
+        btn.disabled = true;
+        try {
+          await api(`/api/applications/${btn.dataset.id}`, { method: "DELETE" });
+          load();
+        } catch (err) {
+          btn.disabled = false;
           alert(err.message);
         }
       });
