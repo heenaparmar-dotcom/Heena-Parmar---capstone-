@@ -6,6 +6,7 @@ const { extractFormLabels } = require("../utils/extractFormLabels");
 const { blockCalendarForEvent, deleteCalendarEvent } = require("../services/googleCalendar");
 const { attemptAutoFill, fillOnly, detectPlatform } = require("../skills/formFiller");
 const { isPaidEvent } = require("../utils/detectPaidEvent");
+const { parseTavilyResults } = require("../utils/parseTavilyResults");
 const { sendApplicationConfirmation } = require("../services/gmail");
 
 const router = express.Router();
@@ -75,6 +76,20 @@ async function attemptCalendarBlockFromPage(user, event, pageText) {
   }
 }
 
+// When a search candidate is just a social-media post, that post is never
+// itself the registration page — but the real registration link is often
+// findable with a targeted follow-up search (it's usually in the caption/
+// bio, or indexed separately). This runs one real MCP search and returns
+// the first genuinely non-social-media result, if any — never invents a
+// URL, only ever returns something an actual search actually returned.
+async function findRealRegistrationLink(eventName) {
+  console.log(`[agent] ACT — searching for a real registration link for "${eventName}"`);
+  const raw = await mcp.searchWeb(`${eventName} registration form`, 6);
+  const candidates = parseTavilyResults(raw);
+  const real = candidates.find((c) => !c.announcementOnly);
+  return real ? real.url : null;
+}
+
 async function applyToOneEvent(user, event, applicantDetails) {
   console.log(`[agent] PERCEIVE — preparing application for "${event.name}"`);
 
@@ -85,8 +100,15 @@ async function applyToOneEvent(user, event, applicantDetails) {
   }
 
   if (event.announcementOnly) {
-    console.log(`[agent] "${event.name}" is a social-media announcement, not a registration page — no form to auto-fill.`);
-    let note = "This is a social-media announcement, not a registration page. No form to fill automatically.";
+    console.log(`[agent] "${event.name}" is a social-media announcement — searching for the real registration link before giving up.`);
+    const realUrl = await findRealRegistrationLink(event.name);
+    if (realUrl) {
+      console.log(`[agent] Found a real, non-social registration link: ${realUrl} — continuing with it.`);
+      return applyToOneEvent(user, { ...event, url: realUrl, announcementOnly: false }, applicantDetails);
+    }
+
+    console.log(`[agent] No real registration link found for "${event.name}" — no form to auto-fill.`);
+    let note = "This is a social-media announcement with no registration page linked anywhere findable. No form to fill automatically.";
     const { calendarEventId, calendarError } = await attemptCalendarBlockFromPage(user, event, pageText);
     if (calendarEventId) note += " A real date was found, so it's been added to your calendar.";
     const application = db.createApplication(user.id, event, {}, "needs_manual_action", note);
