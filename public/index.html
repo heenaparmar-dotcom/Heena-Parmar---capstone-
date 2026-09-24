@@ -4,6 +4,16 @@
 <meta charset="UTF-8" />
 <title>Design World</title>
 <link rel="stylesheet" href="/style.css" />
+<style>
+  /* Scoped to this page's signed-out landing state only — matches the
+     sans-serif typography already used for the tagline/button/supporting
+     text on this same hero, instead of the site's shared serif .wordmark
+     style. Does not affect the header on any other page, or this page's
+     own signed-in "Talk to Me" state. */
+  body:has(#logged-out:not([hidden])) header .wordmark {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+</style>
 </head>
 <body>
 <header id="app-header"></header>
