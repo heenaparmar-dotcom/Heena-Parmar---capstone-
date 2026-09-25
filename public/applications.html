@@ -37,7 +37,7 @@
         ${Object.keys(a.fields).length > 0 ? `<details><summary>Fields</summary>` : ""}
           ${Object.entries(a.fields).map(([label, f]) => `
             <div class="field-row">
-              <label>${label} ${f.source === "agent_generated" ? '<span class="agent-generated-tag">(agent-generated)</span>' : ""}</label>
+              <label>${label}</label>
               <div>${f.value || "Needs your input"}</div>
             </div>`).join("")}
         ${Object.keys(a.fields).length > 0 ? `</details>` : ""}

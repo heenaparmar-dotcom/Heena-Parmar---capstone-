@@ -63,7 +63,7 @@
       document.getElementById("screenshot").src = "data:image/png;base64," + data.screenshot;
       document.getElementById("filled-list").innerHTML = data.filled.map((f) => `
         <div class="field-row">
-          <label>${f.label} ${f.source === "agent_generated" ? '<span class="agent-generated-tag">(agent-generated)</span>' : ""}</label>
+          <label>${f.label}</label>
           <div>${f.value}</div>
         </div>`).join("") || "<p class=\"muted\">None.</p>";
 
