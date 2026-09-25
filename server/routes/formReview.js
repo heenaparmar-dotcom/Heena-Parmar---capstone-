@@ -25,7 +25,7 @@ router.post("/preview", async (req, res) => {
 
   const platform = detectPlatform(url);
   if (platform === "unknown") {
-    return res.status(400).json({ error: "Only Google Forms and Luma links are supported right now." });
+    return res.status(400).json({ error: "That doesn't look like a valid URL." });
   }
 
   const applicantDetails = db.getApplicantDetails(req.user.id);
