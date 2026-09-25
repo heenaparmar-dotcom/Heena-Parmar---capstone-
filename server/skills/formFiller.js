@@ -5,6 +5,7 @@ function detectPlatform(url) {
   if (!url) return "unknown";
   if (/docs\.google\.com\/forms/i.test(url)) return "google_forms";
   if (/luma\.com/i.test(url)) return "luma";
+  if (/^https?:\/\//i.test(url)) return "generic";
   return "unknown";
 }
 
@@ -21,8 +22,8 @@ async function resolveAnswer(label, applicantDetails, overrideMap) {
   const lower = label.toLowerCase();
   const direct = [
     [/name/, applicantDetails.fullName],
-    [/email/, applicantDetails.email],
-    [/phone|mobile/, applicantDetails.phone],
+    [/e-?mail/, applicantDetails.email],
+    [/phone|mobile|telephone/, applicantDetails.phone],
     [/college|university|institute/, applicantDetails.college],
     [/course|branch/, applicantDetails.course],
     [/year/, applicantDetails.year],
@@ -105,6 +106,77 @@ async function fillLumaForm(page, applicantDetails, overrideMap) {
   return { filled, skipped, submitLocator: page.getByRole("button", { name: "Register", exact: true }).last() };
 }
 
+// Best-effort label lookup for a real input on an arbitrary site: an
+// associated <label for=id>, an aria-label, a placeholder, a wrapping
+// <label>, or the nearest ancestor container that also holds a <label> —
+// same DOM-proximity idea as the Luma case, generalized since unknown
+// sites don't follow one fixed structure.
+async function getGenericLabel(page, input) {
+  const id = await input.getAttribute("id").catch(() => null);
+  if (id) {
+    const byFor = page.locator(`label[for="${id}"]`);
+    const text = await byFor.first().textContent().catch(() => null);
+    if (text && text.trim()) return text.trim();
+  }
+  const ariaLabel = await input.getAttribute("aria-label").catch(() => null);
+  if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
+
+  const wrapping = input.locator("xpath=ancestor::label[1]");
+  const wrappingText = await wrapping.first().textContent().catch(() => null);
+  if (wrappingText && wrappingText.trim()) return wrappingText.trim();
+
+  const container = input.locator("xpath=ancestor::*[self::div or self::li or self::p][.//label][1]");
+  const containerLabelText = await container.locator("label").first().textContent().catch(() => null);
+  if (containerLabelText && containerLabelText.trim()) return containerLabelText.trim();
+
+  const placeholder = await input.getAttribute("placeholder").catch(() => null);
+  if (placeholder && placeholder.trim()) return placeholder.trim();
+
+  const name = await input.getAttribute("name").catch(() => null);
+  return name ? name.trim() : null;
+}
+
+// Fills a real form on an arbitrary site: any real text-like <input>/
+// <textarea> inside a <form> (falling back to page-wide inputs if the page
+// has no <form> tag), resolving each field's label by DOM proximity. Choice
+// inputs (checkbox/radio/select/file) are never touched — guessing an
+// option is a fabrication risk this project explicitly avoids.
+async function fillGenericForm(page, applicantDetails, overrideMap) {
+  const selector =
+    "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=image]), textarea";
+  let inputs = await page.locator(`form ${selector}`).all();
+  if (inputs.length === 0) inputs = await page.locator(selector).all();
+
+  const filled = [];
+  const skipped = [];
+
+  for (const input of inputs) {
+    const label = await getGenericLabel(page, input);
+    if (!label) continue;
+
+    const { value, source } = await resolveAnswer(label, applicantDetails, overrideMap);
+    if (value) {
+      await input.fill(String(value)).catch(() => {});
+      filled.push({ label, value, source });
+    } else {
+      skipped.push({ label, reason: "no confident answer available" });
+    }
+  }
+
+  const submitCandidates = page.locator(
+    'form button[type="submit"], form input[type="submit"], button[type="submit"], input[type="submit"], button:has-text("Submit"), button:has-text("Register"), button:has-text("Apply")'
+  );
+  const hasSubmit = (await submitCandidates.count()) > 0;
+
+  return { filled, skipped, submitLocator: hasSubmit ? submitCandidates.first() : null };
+}
+
+function fillFormForPlatform(page, platform, applicantDetails, overrideMap) {
+  if (platform === "google_forms") return fillGoogleForm(page, applicantDetails, overrideMap);
+  if (platform === "luma") return fillLumaForm(page, applicantDetails, overrideMap);
+  return fillGenericForm(page, applicantDetails, overrideMap);
+}
+
 // Top-level entry point: opens the real registration URL in headless
 // Chromium, fills what it confidently can, and only submits if every field
 // discovered on the page was filled (no skipped fields) — per the "only
@@ -114,7 +186,7 @@ async function fillLumaForm(page, applicantDetails, overrideMap) {
 async function attemptAutoFill(url, applicantDetails) {
   const platform = detectPlatform(url);
   if (platform === "unknown") {
-    return { platform, automated: false, reason: "Not a recognized form platform (Google Forms / Luma)." };
+    return { platform, automated: false, reason: "Not a valid URL." };
   }
 
   const browser = await chromium.launch();
@@ -122,8 +194,7 @@ async function attemptAutoFill(url, applicantDetails) {
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
 
-    const { filled, skipped, submitLocator } =
-      platform === "google_forms" ? await fillGoogleForm(page, applicantDetails) : await fillLumaForm(page, applicantDetails);
+    const { filled, skipped, submitLocator } = await fillFormForPlatform(page, platform, applicantDetails);
 
     console.log(`[form-filler] ${platform} — filled ${filled.length}, skipped ${skipped.length}`);
 
@@ -162,7 +233,7 @@ async function attemptAutoFill(url, applicantDetails) {
 async function fillOnly(url, applicantDetails) {
   const platform = detectPlatform(url);
   if (platform === "unknown") {
-    return { platform, ok: false, reason: "Not a recognized form platform (Google Forms / Luma)." };
+    return { platform, ok: false, reason: "Not a valid URL." };
   }
 
   const browser = await chromium.launch();
@@ -170,8 +241,7 @@ async function fillOnly(url, applicantDetails) {
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
 
-    const { filled, skipped } =
-      platform === "google_forms" ? await fillGoogleForm(page, applicantDetails) : await fillLumaForm(page, applicantDetails);
+    const { filled, skipped } = await fillFormForPlatform(page, platform, applicantDetails);
 
     console.log(`[form-filler] preview-fill ${platform} — filled ${filled.length}, skipped ${skipped.length}`);
     const screenshotBuffer = await page.screenshot();
@@ -197,10 +267,7 @@ async function submitFilledForm(url, applicantDetails, reviewedFields) {
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
 
-    const { submitLocator } =
-      platform === "google_forms"
-        ? await fillGoogleForm(page, applicantDetails, overrideMap)
-        : await fillLumaForm(page, applicantDetails, overrideMap);
+    const { submitLocator } = await fillFormForPlatform(page, platform, applicantDetails, overrideMap);
 
     if (!submitLocator) throw new Error("Could not locate a submit button on the real page.");
     await submitLocator.click();
